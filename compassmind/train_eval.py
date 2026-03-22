@@ -16,6 +16,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, log_loss
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.preprocessing import LabelEncoder
+from sklearn.utils.class_weight import compute_sample_weight
 
 from compassmind.features import (
     FeatureConfig,
@@ -186,8 +187,15 @@ def _fit_models_on_train(
 ) -> tuple[CalibratedClassifierCV, CalibratedClassifierCV]:
     clf_s = build_calibrated_state_clf(backend, random_state, calibration_cv=calibration_cv)
     clf_i = build_calibrated_intensity_clf(backend, random_state, calibration_cv=calibration_cv)
-    clf_s.fit(X_tr, ys_tr)
-    clf_i.fit(X_tr, yi_tr)
+    # Logistic bases already use class_weight="balanced"; XGBoost needs explicit sample weights.
+    if backend == "logistic":
+        clf_s.fit(X_tr, ys_tr)
+        clf_i.fit(X_tr, yi_tr)
+    else:
+        sw_s = compute_sample_weight("balanced", ys_tr)
+        sw_i = compute_sample_weight("balanced", yi_tr)
+        clf_s.fit(X_tr, ys_tr, sample_weight=sw_s)
+        clf_i.fit(X_tr, yi_tr, sample_weight=sw_i)
     return clf_s, clf_i
 
 

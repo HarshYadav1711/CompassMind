@@ -20,19 +20,43 @@ from compassmind.uncertainty import (
 )
 
 
-def _clip_intensity_by_confidence(pred_int: int, confidence: float) -> int:
-    """
-    Temper high intensity when blended confidence is modest (same scale as CSV ``confidence``).
+def _class_values_for_intensity_proba(clf_i: Any) -> np.ndarray:
+    """Ordinal labels 1–5 aligned with ``predict_proba`` columns."""
+    return np.array([int(float(c)) for c in clf_i.classes_], dtype=float)
 
-    Uses the assignment thresholds: 5→4 below 0.7; 4→3 below 0.6. If the model rarely exceeds
-    those confidence levels, most rows map toward mid-range intensity (expected).
-    """
-    p = int(pred_int)
-    if p == 5 and confidence < 0.7:
-        p = 4
-    if p == 4 and confidence < 0.6:
-        p = 3
-    return p
+
+def _expected_intensity_from_proba(pi: np.ndarray, class_values: np.ndarray) -> np.ndarray:
+    """Soft expectation + round + clip (reduces single-class collapse vs argmax)."""
+    ev = (pi * class_values).sum(axis=1)
+    return np.clip(np.round(ev).astype(int), 1, 5)
+
+
+def _float_field(row: dict[str, Any], key: str) -> float:
+    """NaN if missing or non-numeric (do not impute defaults for signal rules)."""
+    v = row.get(key)
+    if v is None:
+        return float("nan")
+    if isinstance(v, float) and np.isnan(v):
+        return float("nan")
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def _adjust_intensity_signals(pred: int, stress: float, energy: float, confidence: float) -> int:
+    """Deterministic nudges from stress, energy, and low confidence (toward mid 3)."""
+    p = int(np.clip(pred, 1, 5))
+    if not np.isnan(stress) and stress >= 4.0 and p <= 3:
+        p = min(5, p + 1)
+    if not np.isnan(energy) and energy <= 2.0 and p >= 3:
+        p = max(1, p - 1)
+    if confidence < 0.45:
+        if p > 3:
+            p -= 1
+        elif p < 3:
+            p += 1
+    return int(np.clip(p, 1, 5))
 
 
 def validate_outputs(df: pd.DataFrame) -> None:
@@ -58,7 +82,6 @@ def predict_dataframe(df: pd.DataFrame, bundle: dict[str, Any]) -> pd.DataFrame:
     clf_s = bundle["clf_state"]
     clf_i = bundle["clf_intensity"]
     le_s = bundle["le_state"]
-    le_i = bundle["le_intensity"]
 
     ucfg = build_uncertainty_config(bundle)
 
@@ -71,14 +94,16 @@ def predict_dataframe(df: pd.DataFrame, bundle: dict[str, Any]) -> pd.DataFrame:
     margin_state = top_two_margin(ps)
 
     pred_state = le_s.inverse_transform(np.argmax(ps, axis=1))
-    pred_int_raw = le_i.inverse_transform(np.argmax(pi, axis=1))
-    pred_int = np.array([int(x) for x in pred_int_raw])
-    for i in range(len(pred_int)):
-        pred_int[i] = _clip_intensity_by_confidence(pred_int[i], float(conf[i]))
+    cls_vals = _class_values_for_intensity_proba(clf_i)
+    pred_int = _expected_intensity_from_proba(pi, cls_vals)
 
     rows: list[dict[str, Any]] = []
     for i in range(len(df)):
         r = df.iloc[i].to_dict()
+        st = _float_field(r, "stress_level")
+        en = _float_field(r, "energy_level")
+        pred_int[i] = _adjust_intensity_signals(int(pred_int[i]), st, en, float(conf[i]))
+
         jt = str(r.get("journal_text") or "")
         weak, _, _ = _journal_weakness(jt)
         miss_n = _count_missing_metadata(r)

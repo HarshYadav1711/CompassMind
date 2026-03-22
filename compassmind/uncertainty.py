@@ -7,7 +7,7 @@ Interview-friendly summary
    (weighted max calibrated probability). Higher means “more trust in the top prediction.”
 
 2. **uncertain_flag** (0/1) — set to 1 if **any** of: confidence below 0.40; **or** (top-1 vs top-2
-   gap below 0.05 **and** confidence below 0.55); **or** conflicting signals (safety). Short text or
+   gap below 0.05 **and** confidence below 0.50); **or** conflicting signals (safety). Short text or
    one missing field alone does **not** trigger uncertainty.
 
 This is intentionally rule-based so you can explain trade-offs without a second black box.
@@ -23,7 +23,7 @@ import pandas as pd
 
 # Inference: primary confidence floor; gap rule uses margin + secondary confidence.
 DEFAULT_CONF_THRESH = 0.40
-DEFAULT_CONF_SECONDARY_THRESH = 0.55  # used with tight gap only
+DEFAULT_CONF_SECONDARY_THRESH = 0.50  # used with tight gap only
 DEFAULT_MARGIN_THRESH = 0.05  # top1 - top2 below this => check secondary rule
 
 # Training-time tuning (holdout / metrics only); not used for inference uncertain_flag.

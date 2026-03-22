@@ -116,6 +116,8 @@ def cmd_predict(args: argparse.Namespace) -> None:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(args.out, index=False)
     print("Wrote", args.out, "rows:", len(out))
+    print("predicted_intensity distribution:")
+    print(out["predicted_intensity"].value_counts().sort_index())
 
 
 def main(argv: list[str] | None = None) -> None:

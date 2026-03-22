@@ -57,9 +57,10 @@ def test_compute_uncertain_flag_low_confidence():
 
 def test_compute_uncertain_flag_gap_and_medium_confidence():
     cfg = UncertaintyConfig()
+    # gap < 0.05 and confidence < 0.50 (not <=)
     assert (
         compute_uncertain_flag(
-            confidence=0.5,
+            confidence=0.49,
             max_state_prob=0.3,
             norm_entropy_state=0.2,
             margin_state=0.04,
@@ -69,6 +70,19 @@ def test_compute_uncertain_flag_gap_and_medium_confidence():
             cfg=cfg,
         )
         == 1
+    )
+    assert (
+        compute_uncertain_flag(
+            confidence=0.50,
+            max_state_prob=0.3,
+            norm_entropy_state=0.2,
+            margin_state=0.04,
+            journal_weak=False,
+            missing_meta=0,
+            conflicting=False,
+            cfg=cfg,
+        )
+        == 0
     )
     assert (
         compute_uncertain_flag(
