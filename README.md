@@ -13,6 +13,24 @@ Production-style **local** pipeline for the Arvyax reflective emotion task: mult
 - Train: `Sample_arvyax_reflective_dataset.xlsx - Dataset_120.csv`  
 - Test PDF: `arvyax_test_inputs_120.xlsx - Sheet1.pdf`
 
+## Data ingestion (no training)
+
+The `compassmind.ingestion` package loads the CSV and PDF, applies **deterministic preprocessing** (lowercase journal text, trim, Unicode NFKC, standardized missing values, optional `{col}_is_missing` flags), and validates each row with **strict Pydantic schemas** (`FeatureRowStrict`, `TrainingRowStrict`).
+
+```bash
+set PYTHONPATH=%CD%
+python -m compassmind.cli ingest
+```
+
+Programmatic use:
+
+```python
+from compassmind.ingestion import load_training_features, load_test_pdf_features
+
+train_df = load_training_features()
+test_df = load_test_pdf_features()
+```
+
 ## Quickstart
 
 ```bash
@@ -40,7 +58,7 @@ pytest -q
 
 ## Design notes
 
-- **Text**: word + character TF-IDF; light whitespace normalization only (typos preserved).  
+- **Text**: ingestion lowercases journal text and trims whitespace (typos/digits preserved); modeling uses word + char TF-IDF on that preprocessed field.  
 - **Metadata**: numeric imputation + scaling + missing flags; categorical one-hot with `__MISSING__`.  
 - **Uncertainty**: sigmoid-calibrated logistic regression; `uncertain_flag` from state max-probability and normalized entropy (thresholds tuned on a held-out split).  
 - **Actions**: deterministic rules in `compassmind/decision.py` (see `EDGE_PLAN.md` for offline/mobile considerations).
