@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 import numpy as np
@@ -151,3 +152,14 @@ def predict_dataframe(df: pd.DataFrame, bundle: dict[str, Any]) -> pd.DataFrame:
     out = pd.DataFrame(rows)[cols]
     validate_outputs(out)
     return out
+
+
+def main() -> None:
+    """Support ``python -m compassmind.predict`` (same as ``python -m compassmind predict``)."""
+    from compassmind.cli import main as cli_main
+
+    cli_main(["predict", *sys.argv[1:]])
+
+
+if __name__ == "__main__":
+    main()

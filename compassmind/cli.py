@@ -7,6 +7,7 @@ Commands
 ``predict``     Run inference; write CSV with required columns.
 ``evaluate``    Holdout metrics + reports under ``artifacts/reports/``; refresh markdown docs.
 ``ingest``      Validate CSV + PDF ingestion only.
+``summarize``   Print column summaries for a predictions CSV (PowerShell-friendly).
 
 Entrypoints: ``python -m compassmind`` or ``compassmind`` (if installed).
 """
@@ -120,6 +121,18 @@ def cmd_predict(args: argparse.Namespace) -> None:
     print(out["predicted_intensity"].value_counts().sort_index())
 
 
+def cmd_summarize(args: argparse.Namespace) -> None:
+    """Load a predictions CSV and print ``value_counts`` (use from PowerShell, not raw pandas syntax)."""
+    path = args.csv
+    if not path.is_file():
+        raise SystemExit(f"File not found: {path}")
+    df = pd.read_csv(path)
+    if "predicted_intensity" not in df.columns:
+        raise SystemExit(f"No column 'predicted_intensity' in {path}")
+    print(f"predicted_intensity value_counts() — {path}")
+    print(df["predicted_intensity"].value_counts().sort_index())
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(
         prog="compassmind",
@@ -170,6 +183,18 @@ def main(argv: list[str] | None = None) -> None:
     pr.add_argument("--out", type=Path, default=DEFAULT_PREDICTIONS_CSV)
     pr.add_argument("--seed", type=int, default=42, help="NumPy RNG for any stochastic post-steps.")
     pr.set_defaults(func=cmd_predict)
+
+    sm = sub.add_parser(
+        "summarize",
+        help="Print predicted_intensity value_counts for a predictions CSV (no Python REPL needed)",
+    )
+    sm.add_argument(
+        "--csv",
+        type=Path,
+        default=DEFAULT_PREDICTIONS_CSV,
+        help=f"Default: {DEFAULT_PREDICTIONS_CSV}",
+    )
+    sm.set_defaults(func=cmd_summarize)
 
     args = p.parse_args(argv)
     args.func(args)

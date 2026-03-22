@@ -140,9 +140,23 @@ Faster iteration: `python -m compassmind train --no-cv`
 python -m compassmind predict
 ```
 
+Equivalent: `python -m compassmind.predict` (runs the same CLI).
+
 Writes **`outputs/predictions.csv`** (the `outputs/` folder is created automatically). Override path: `--out path/to/file.csv`.
 
 Or from a CSV: `python -m compassmind predict --csv your_rows.csv`
+
+**Inspect intensity counts in PowerShell** — do **not** paste `df["predicted_intensity"].value_counts()` into the shell (that is Python, not PowerShell). Use either:
+
+```powershell
+python -m compassmind summarize
+```
+
+(defaults to `outputs/predictions.csv`) or:
+
+```powershell
+python -c "import pandas as pd; df=pd.read_csv('outputs/predictions.csv'); print(df['predicted_intensity'].value_counts())"
+```
 
 ### 4. Evaluation report (optional)
 
