@@ -1,0 +1,24 @@
+[project]
+name = "compassmind"
+version = "0.1.0"
+description = "Local reflective-emotion ML + uncertainty-aware recommendations"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26,<3",
+  "pandas>=2.1,<3",
+  "scikit-learn>=1.4,<2",
+  "scipy>=1.11,<2",
+  "joblib>=1.3,<2",
+  "pydantic>=2.6,<3",
+  "pdfplumber>=0.11,<1",
+  "pypdf>=4.0,<6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9"]
+demo = ["fastapi>=0.110,<1", "uvicorn>=0.27,<1"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
