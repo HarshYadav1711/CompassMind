@@ -31,6 +31,23 @@ train_df = load_training_features()
 test_df = load_test_pdf_features()
 ```
 
+## Baseline training (features + calibrated models)
+
+- **Text**: word TF-IDF (n-grams via `word_ngram_range`) + character WB TF-IDF (`char_ngram_range`).
+- **Metadata**: numeric median impute + `StandardScaler`; 9 explicit `{col}_is_missing` flags; categorical one-hot with `__MISSING__`.
+- **Targets**: `emotional_state` (multiclass) and `intensity` (1–5 as 5-way classification).
+- **Models**: sigmoid-calibrated `LogisticRegression` (default). Optional `--try-xgb` benchmarks **CPU** `XGBClassifier` and switches only if validation macro-F1 improves meaningfully.
+- **Ablation**: `train` fits **text-only** vs **text+metadata** and writes `ablation_summary.json`.
+- **Validation**: stratified holdout + optional stratified K-fold metrics (`--no-cv` to skip CV for speed).
+
+```bash
+set PYTHONPATH=%CD%
+python -m compassmind.cli train --data "Sample_arvyax_reflective_dataset.xlsx - Dataset_120.csv"
+python -m compassmind.cli train --try-xgb --no-cv
+```
+
+Artifacts: `artifacts/model_bundle.joblib` (vectorizers, `MetadataEncoder`, calibrated `clf_state` / `clf_intensity`, label encoders, uncertainty thresholds) plus `*.metrics.json`.
+
 ## Quickstart
 
 ```bash
@@ -60,7 +77,8 @@ pytest -q
 
 - **Text**: ingestion lowercases journal text and trims whitespace (typos/digits preserved); modeling uses word + char TF-IDF on that preprocessed field.  
 - **Metadata**: numeric imputation + scaling + missing flags; categorical one-hot with `__MISSING__`.  
-- **Uncertainty**: sigmoid-calibrated logistic regression; `uncertain_flag` from state max-probability and normalized entropy (thresholds tuned on a held-out split).  
-- **Actions**: deterministic rules in `compassmind/decision.py` (see `EDGE_PLAN.md` for offline/mobile considerations).
+- **Uncertainty** (`compassmind/uncertainty.py`): **confidence** = weighted blend of max calibrated probabilities (state + intensity). **`uncertain_flag`** ∈ {0,1} is rule-based OR of: low confidence, high entropy, small top-1 vs top-2 margin, short/weak journal text, sparse metadata, or a few conservative “signal conflict” checks. Training still stores tuned `conf_thresh` / `ent_thresh` in the bundle for the probability/entropy slice.  
+- **Recommendations** (`compassmind/decision.py`): transparent mapping from `predicted_state`, `predicted_intensity`, stress, energy, time of day, and uncertainty to **`what_to_do`** / **`when_to_do`** using a fixed vocabulary (`box_breathing`, `journaling`, `grounding`, `deep_work`, `rest`, `light_planning`, `movement`, `pause`, …). Under uncertainty, defaults favor **breathing / grounding / pause** over aggressive productivity.  
+- **Offline**: see `EDGE_PLAN.md`.
 
 See `ERROR_ANALYSIS.md` for failure modes and ablation discussion.

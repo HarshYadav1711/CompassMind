@@ -35,7 +35,7 @@ class PredictionRow(BaseModel):
     predicted_state: str
     predicted_intensity: int = Field(ge=1, le=5)
     confidence: float = Field(ge=0.0, le=1.0)
-    uncertain_flag: bool
+    uncertain_flag: int = Field(ge=0, le=1)
     what_to_do: str
     when_to_do: str
     supportive_message: Optional[str] = Field(

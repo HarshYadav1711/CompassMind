@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -22,21 +23,41 @@ ARTIFACTS = Path(__file__).resolve().parents[1] / "artifacts" / "model_bundle.jo
 
 
 def cmd_train(args: argparse.Namespace) -> None:
-    df = load_training_features(args.data, validate=True, add_missing_flags=False)
-    cfg = FeatureConfig()
-    results = {}
+    df = load_training_features(args.data, validate=True, add_missing_flags=args.add_missing_flags)
+    cfg = FeatureConfig(random_state=args.seed)
+    results: dict[str, Any] = {}
     for use_meta in (True, False):
         name = "text_plus_metadata" if use_meta else "text_only"
-        bundle = train_bundle(df, cfg, use_metadata=use_meta, random_state=args.seed)
+        bundle = train_bundle(
+            df,
+            cfg,
+            use_metadata=use_meta,
+            random_state=args.seed,
+            try_xgb_benchmark=args.try_xgb,
+            run_stratified_cv=not args.no_cv,
+            cv_folds=args.cv_folds,
+        )
         out_path = args.artifacts.parent / f"{args.artifacts.stem}_{name}.joblib"
         save_bundle(bundle, out_path)
-        results[name] = bundle["metrics"]
-        print(json.dumps({name: bundle["metrics"]}, indent=2))
+        results[name] = {
+            "metrics": bundle["metrics"],
+            "cv_metrics": bundle.get("cv_metrics"),
+            "benchmark": bundle.get("benchmark"),
+            "backend": bundle.get("backend"),
+        }
+        print(json.dumps({name: results[name]}, indent=2))
     summary_path = args.artifacts.parent / "ablation_summary.json"
     with summary_path.open("w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
-    # Default shipping model: text + metadata
-    ship = train_bundle(df, cfg, use_metadata=True, random_state=args.seed)
+    ship = train_bundle(
+        df,
+        cfg,
+        use_metadata=True,
+        random_state=args.seed,
+        try_xgb_benchmark=args.try_xgb,
+        run_stratified_cv=not args.no_cv,
+        cv_folds=args.cv_folds,
+    )
     save_bundle(ship, args.artifacts)
     print("Saved primary bundle to", args.artifacts)
 
@@ -70,6 +91,19 @@ def main() -> None:
     t.add_argument("--data", type=Path, default=DEFAULT_TRAIN)
     t.add_argument("--artifacts", type=Path, default=ARTIFACTS)
     t.add_argument("--seed", type=int, default=42)
+    t.add_argument(
+        "--add-missing-flags",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Align with ingestion missingness flags on structured columns (recommended).",
+    )
+    t.add_argument(
+        "--try-xgb",
+        action="store_true",
+        help="Benchmark CPU XGBoost vs logistic; keep XGBoost only if val macro-F1 improves meaningfully.",
+    )
+    t.add_argument("--no-cv", action="store_true", help="Skip stratified K-fold CV reporting (faster).")
+    t.add_argument("--cv-folds", type=int, default=5)
     t.set_defaults(func=cmd_train)
 
     ing = sub.add_parser("ingest", help="Load and validate CSV + PDF (no training)")

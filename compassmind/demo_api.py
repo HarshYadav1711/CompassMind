@@ -36,7 +36,7 @@ class PredictResponse(BaseModel):
     predicted_state: str
     predicted_intensity: int
     confidence: float
-    uncertain_flag: bool
+    uncertain_flag: int
     what_to_do: str
     when_to_do: str
 
