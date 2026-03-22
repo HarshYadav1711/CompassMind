@@ -1,79 +1,230 @@
-# Error analysis and failure cases
+# Error analysis and robustness (CompassMind)
 
-This document records **representative failure modes** observed or expected for CompassMind on short, noisy reflections. At least ten cases are listed with **cause**, **symptom**, and **mitigation** (local / no hosted APIs).
+This document is generated from a **stratified holdout** (15%, seed 42) that matches training semantics: models are fit **only** on the train split; metrics and cases are from **validation** rows only. It is meant for reviewers and product partners—**not** clinical claims.
 
-## 1. Intensity collapse to mid–high bins
+## Summary metrics (validation)
 
-**Symptom:** Validation macro-F1 for `intensity` stays modest; some runs predict `4` frequently on the PDF batch.  
-**Cause:** Five-way classification with overlapping language cues; ordinal structure is not explicitly modeled.  
-**Mitigation:** Prefer reporting intensity with uncertainty; consider ordinal logit or Corn’s method in a follow-up (still local). Optional tree models (e.g., histogram gradient boosting on engineered dense features) are a possible follow-up if they clearly beat logistic regression on time-split CV.
+| Model | emotional_state macro-F1 | emotional_state acc | intensity macro-F1 | intensity acc |
+| --- | --- | --- | --- | --- |
+| Text-only | 0.6465 | 0.6444 | 0.1646 | 0.2611 |
+| Text + metadata | 0.6388 | 0.6389 | 0.1440 | 0.2278 |
 
-## 2. Metadata OCR gaps in PDF columns
+**Ablation delta (text+metadata minus text-only):** state macro-F1 **-0.0077**, intensity macro-F1 **-0.0207**.
 
-**Symptom:** Rows where numeric columns are missing or merged into journal text; `face_emotion_hint` / `reflection_quality` occasionally unsplit.  
-**Cause:** Geometric parsing cannot recover tokens when layout overlaps or ellipsis tokens (`1...`) appear.  
-**Mitigation:** Missing-value indicators + `__MISSING__` buckets; parser strips ellipsis tails; unsafe numeric tokens fall back into journal text.
+Interpretation: metadata is **not** guaranteed to help on every split—structured fields can be noisy or missing—but it is retained for product inference where context is often partially available.
 
-## 3. Contradictory cues (“calm” and “wired” in one reflection)
+## Text vs metadata contribution (linear state head)
 
-**Symptom:** Model picks a single `emotional_state` with moderate entropy; `uncertain_flag` may be true.  
-**Cause:** Multiclass softmax forces one label; contradictory phrases are common in real journals.  
-**Mitigation:** Uncertainty layer + safe actions (grounding, journaling). Product copy should not overclaim a single mood.
+We aggregate **L2 norm of multinomial logistic coefficients** per block (word TF-IDF, char TF-IDF, metadata stack). This is a faithful linear-model attribution—not SHAP—but it answers “where capacity went” in a defensible baseline.
 
-## 4. Ambience inferred only from keywords
+| Block | Share of block L2 (state) | Raw block L2 |
+| --- | --- | --- |
+| Word n-grams | 0.457 | 13.37 |
+| Char n-grams | 0.446 | 13.03 |
+| Metadata + missingness + OHE | 0.097 | 2.85 |
 
-**Symptom:** `ambience_type` sometimes wrong or `None` if the PDF hides ambience inside garbled tokens.  
-**Cause:** Heuristic `\b(ocean|forest|…)\b` search on journal text only.  
-**Mitigation:** Missing indicator; model relies more on journal wording when ambience is absent.
+Feature counts: **1412** word, **3783** char, **39** metadata columns (after encoding).
 
-## 5. Short reflections (“ok session”)
+### Highest-magnitude token features (state head)
 
-**Symptom:** High entropy, frequent uncertain flags; intensity unstable.  
-**Cause:** Very low token count for both word and char n-grams.  
-**Mitigation:** Metadata features (when present) carry signal; rules route to low-risk actions when uncertain.
+- `w:nothing` — 1.3942
+- `w:but not` — 1.2657
+- `w:but` — 1.2216
+- `w:felt more` — 1.1259
+- `w:more` — 1.1101
+- `w:drained` — 1.0755
+- `w:felt distracted` — 1.0698
+- `w:my` — 1.0544
+- `w:much` — 1.0181
+- `w:felt mentally` — 1.0059
+- `w:clearer` — 0.9888
+- `w:nothing really` — 0.9646
 
-## 6. Class imbalance toward “neutral / calm” language
+## Text vs metadata contribution (linear intensity head)
 
-**Symptom:** Rare states (e.g., severe overwhelm) under-predicted unless `class_weight='balanced'`.  
-**Cause:** Natural frequency skew in user text.  
-**Mitigation:** Balanced logistic regression; calibration for probability quality, not for prevalence matching.
+| Block | Share of block L2 (intensity) | Raw block L2 |
+| --- | --- | --- |
+| Word n-grams | 0.505 | 14.13 |
+| Char n-grams | 0.409 | 11.45 |
+| Metadata + missingness + OHE | 0.085 | 2.39 |
 
-## 7. Calibration vs. accuracy trade-off
+## Validation failure cases (real rows)
 
-**Symptom:** Log-loss may move with calibration even when argmax accuracy is flat.  
-**Cause:** `CalibratedClassifierCV` refits decision boundaries in probability space.  
-**Mitigation:** Track log-loss and macro-F1; thresholds tuned on held-out split for **uncertain rate**, not only accuracy.
+### Case 1 (state)
 
-## 8. Text-only vs text+metadata ablation flip
+- **Journal (excerpt):** ended up locked in for a bit. ocean audio was nice. not sure why but it shifted.
+- **Metadata (subset):** {'stress': 1.0, 'energy': 3.0, 'time_of_day': 'afternoon', 'face': None}
+- **True → pred:** state `focused` → `overwhelmed`; intensity 1 → 4
+- **What went wrong:** Predicted `overwhelmed` instead of labeled `focused` (intensity 4 vs 1).
+- **Why (mechanism):** Multiclass softmax must pick one label; overlapping vocabulary across states (e.g. tired vs overwhelmed) creates near ties.
+- **How to improve:** Add contrastive / hard-negative pairs for commonly confused state pairs. Try ordinal intensity (e.g. cumulative link) or cost-sensitive loss on adjacent bins. Use `uncertain_flag` + conservative UX whenever margin or entropy is poor (already in pipeline).
 
-**Symptom:** On our validation split, **text-only** sometimes edges out text+metadata for macro-F1 (see `artifacts/ablation_summary.json`).  
-**Cause:** With limited data, extra one-hot dimensions can add variance; some metadata fields are noisy or missing.  
-**Mitigation:** Ship text+metadata for production when metadata is expected to be present; keep ablation to document the trade-off.
+### Case 2 (state)
 
-## 9. Decision engine over-uses grounding when `confidence < 0.42`
+- **Journal (excerpt):** still anxious a bit
+- **Metadata (subset):** {'stress': 5.0, 'energy': 5.0, 'time_of_day': 'morning', 'face': 'neutral_face'}
+- **True → pred:** state `restless` → `neutral`; intensity 1 → 1
+- **What went wrong:** Predicted `neutral` instead of labeled `restless` (intensity 1 vs 1).
+- **Why (mechanism):** Bag-of-ngrams underfits when the journal has almost no tokens. Multiclass softmax must pick one label; overlapping vocabulary across states (e.g. tired vs overwhelmed) creates near ties.
+- **How to improve:** Down-weight or abstain on ultra-short reflections in evaluation and product. Add contrastive / hard-negative pairs for commonly confused state pairs. Try ordinal intensity (e.g. cumulative link) or cost-sensitive loss on adjacent bins.
 
-**Symptom:** Even argmax state looks reasonable, user still sees `grounding_breath_and_senses`.  
-**Cause:** Explicit safety rule in `decision.recommend` blending model confidence and human factors.  
-**Mitigation:** Tune the `0.42` cutoff alongside clinical / product review; keep separate from `uncertain_flag`.
+### Case 3 (state)
 
-## 10. PDF row without structured tail columns
+- **Journal (excerpt):** honestly honestly not much change.
+- **Metadata (subset):** {'stress': 1.0, 'energy': 4.0, 'time_of_day': 'evening', 'face': 'tired_face'}
+- **True → pred:** state `focused` → `restless`; intensity 1 → 4
+- **What went wrong:** Predicted `restless` instead of labeled `focused` (intensity 4 vs 1).
+- **Why (mechanism):** Bag-of-ngrams underfits when the journal has almost no tokens. Multiclass softmax must pick one label; overlapping vocabulary across states (e.g. tired vs overwhelmed) creates near ties.
+- **How to improve:** Down-weight or abstain on ultra-short reflections in evaluation and product. Add contrastive / hard-negative pairs for commonly confused state pairs. Try ordinal intensity (e.g. cumulative link) or cost-sensitive loss on adjacent bins.
 
-**Symptom:** Only journal + `happy_facevague`-style tail; all numerics missing.  
-**Cause:** Layout similar to training rows with sparse metadata (valid in training too).  
-**Mitigation:** Model trained with missingness; uncertainty typically rises; rules favor safe micro-actions.
+### Case 4 (state)
 
-## 11. Spurious digits inside words (`organiz4ed`)
+- **Journal (excerpt):** at first felt good for a moment.
+- **Metadata (subset):** {'stress': 5.0, 'energy': 4.0, 'time_of_day': 'afternoon', 'face': None}
+- **True → pred:** state `restless` → `overwhelmed`; intensity 5 → 3
+- **What went wrong:** Predicted `overwhelmed` instead of labeled `restless` (intensity 3 vs 5).
+- **Why (mechanism):** Bag-of-ngrams underfits when the journal has almost no tokens. Multiclass softmax must pick one label; overlapping vocabulary across states (e.g. tired vs overwhelmed) creates near ties.
+- **How to improve:** Down-weight or abstain on ultra-short reflections in evaluation and product. Add contrastive / hard-negative pairs for commonly confused state pairs. Try ordinal intensity (e.g. cumulative link) or cost-sensitive loss on adjacent bins.
 
-**Symptom:** Char n-grams pick up noise; occasionally misleading if digits dominate.  
-**Cause:** Deliberate choice not to strip digits from text features.  
-**Mitigation:** Word + char fusion; metadata provides orthogonal signal when available.
+### Case 5 (state)
 
-## 12. Face / quality token glued (`happy_facevague`)
+- **Journal (excerpt):** by the end felt good for a moment.
+- **Metadata (subset):** {'stress': 2.0, 'energy': 3.0, 'time_of_day': 'morning', 'face': None}
+- **True → pred:** state `focused` → `overwhelmed`; intensity 5 → 3
+- **What went wrong:** Predicted `overwhelmed` instead of labeled `focused` (intensity 3 vs 5).
+- **Why (mechanism):** Bag-of-ngrams underfits when the journal has almost no tokens. Multiclass softmax must pick one label; overlapping vocabulary across states (e.g. tired vs overwhelmed) creates near ties.
+- **How to improve:** Down-weight or abstain on ultra-short reflections in evaluation and product. Add contrastive / hard-negative pairs for commonly confused state pairs. Try ordinal intensity (e.g. cumulative link) or cost-sensitive loss on adjacent bins.
 
-**Symptom:** Parser may miss quality if glued form is nonstandard.  
-**Cause:** PDF text extraction merges adjacent tokens.  
-**Mitigation:** `_split_face_quality` tries glued and spaced variants; missing flags handle failure.
+### Case 6 (state)
 
----
+- **Journal (excerpt):** i guess back to normal after.
+- **Metadata (subset):** {'stress': 5.0, 'energy': 4.0, 'time_of_day': 'night', 'face': 'happy_face'}
+- **True → pred:** state `neutral` → `restless`; intensity 2 → 4
+- **What went wrong:** Predicted `restless` instead of labeled `neutral` (intensity 4 vs 2).
+- **Why (mechanism):** Bag-of-ngrams underfits when the journal has almost no tokens. Multiclass softmax must pick one label; overlapping vocabulary across states (e.g. tired vs overwhelmed) creates near ties.
+- **How to improve:** Down-weight or abstain on ultra-short reflections in evaluation and product. Add contrastive / hard-negative pairs for commonly confused state pairs. Try ordinal intensity (e.g. cumulative link) or cost-sensitive loss on adjacent bins.
 
-**Review takeaway:** Treat CompassMind as a **decision aid** with explicit uncertainty and conservative actions—not a clinical instrument. External validation on fresh cohorts is required before any real-world deployment.
+### Case 7 (state)
+
+- **Journal (excerpt):** during the session mind was all over the place. later it changed felt better after a bit.
+- **Metadata (subset):** {'stress': 2.0, 'energy': 5.0, 'time_of_day': 'afternoon', 'face': 'neutral_face'}
+- **True → pred:** state `calm` → `overwhelmed`; intensity 5 → 1
+- **What went wrong:** Predicted `overwhelmed` instead of labeled `calm` (intensity 1 vs 5).
+- **Why (mechanism):** Multiclass softmax must pick one label; overlapping vocabulary across states (e.g. tired vs overwhelmed) creates near ties.
+- **How to improve:** Add contrastive / hard-negative pairs for commonly confused state pairs. Try ordinal intensity (e.g. cumulative link) or cost-sensitive loss on adjacent bins. Use `uncertain_flag` + conservative UX whenever margin or entropy is poor (already in pipeline).
+
+### Case 8 (state)
+
+- **Journal (excerpt):** still heavy
+- **Metadata (subset):** {'stress': 3.0, 'energy': 5.0, 'time_of_day': 'afternoon', 'face': None}
+- **True → pred:** state `focused` → `overwhelmed`; intensity 2 → 4
+- **What went wrong:** Predicted `overwhelmed` instead of labeled `focused` (intensity 4 vs 2).
+- **Why (mechanism):** Bag-of-ngrams underfits when the journal has almost no tokens. Multiclass softmax must pick one label; overlapping vocabulary across states (e.g. tired vs overwhelmed) creates near ties.
+- **How to improve:** Down-weight or abstain on ultra-short reflections in evaluation and product. Add contrastive / hard-negative pairs for commonly confused state pairs. Try ordinal intensity (e.g. cumulative link) or cost-sensitive loss on adjacent bins.
+
+### Case 9 (state)
+
+- **Journal (excerpt):** not sure what changed
+- **Metadata (subset):** {'stress': 5.0, 'energy': 5.0, 'time_of_day': 'evening', 'face': 'tired_face'}
+- **True → pred:** state `mixed` → `calm`; intensity 1 → 1
+- **What went wrong:** Predicted `calm` instead of labeled `mixed` (intensity 1 vs 1).
+- **Why (mechanism):** Bag-of-ngrams underfits when the journal has almost no tokens. Multiclass softmax must pick one label; overlapping vocabulary across states (e.g. tired vs overwhelmed) creates near ties.
+- **How to improve:** Down-weight or abstain on ultra-short reflections in evaluation and product. Add contrastive / hard-negative pairs for commonly confused state pairs. Try ordinal intensity (e.g. cumulative link) or cost-sensitive loss on adjacent bins.
+
+### Case 10 (state)
+
+- **Journal (excerpt):** at first that helped a little.
+- **Metadata (subset):** {'stress': 2.0, 'energy': 1.0, 'time_of_day': 'morning', 'face': None}
+- **True → pred:** state `neutral` → `calm`; intensity 4 → 3
+- **What went wrong:** Predicted `calm` instead of labeled `neutral` (intensity 3 vs 4).
+- **Why (mechanism):** Bag-of-ngrams underfits when the journal has almost no tokens. Multiclass softmax must pick one label; overlapping vocabulary across states (e.g. tired vs overwhelmed) creates near ties.
+- **How to improve:** Down-weight or abstain on ultra-short reflections in evaluation and product. Add contrastive / hard-negative pairs for commonly confused state pairs. Try ordinal intensity (e.g. cumulative link) or cost-sensitive loss on adjacent bins.
+
+### Case 11 (state)
+
+- **Journal (excerpt):** lowkey felt pretty grounded. i stayed with it anyway.
+- **Metadata (subset):** {'stress': 4.0, 'energy': 2.0, 'time_of_day': 'night', 'face': 'happy_face'}
+- **True → pred:** state `calm` → `neutral`; intensity 5 → 4
+- **What went wrong:** Predicted `neutral` instead of labeled `calm` (intensity 4 vs 5).
+- **Why (mechanism):** Bag-of-ngrams underfits when the journal has almost no tokens. Multiclass softmax must pick one label; overlapping vocabulary across states (e.g. tired vs overwhelmed) creates near ties.
+- **How to improve:** Down-weight or abstain on ultra-short reflections in evaluation and product. Add contrastive / hard-negative pairs for commonly confused state pairs. Try ordinal intensity (e.g. cumulative link) or cost-sensitive loss on adjacent bins.
+
+### Case 12 (state)
+
+- **Journal (excerpt):** for some reason kinda calm now.
+- **Metadata (subset):** {'stress': 5.0, 'energy': 4.0, 'time_of_day': 'evening', 'face': None}
+- **True → pred:** state `focused` → `overwhelmed`; intensity 2 → 4
+- **What went wrong:** Predicted `overwhelmed` instead of labeled `focused` (intensity 4 vs 2).
+- **Why (mechanism):** Bag-of-ngrams underfits when the journal has almost no tokens. Multiclass softmax must pick one label; overlapping vocabulary across states (e.g. tired vs overwhelmed) creates near ties. Calm wording coexists with high stress metadata; the model cannot represent 'both' in one class.
+- **How to improve:** Down-weight or abstain on ultra-short reflections in evaluation and product. Add contrastive / hard-negative pairs for commonly confused state pairs. Try ordinal intensity (e.g. cumulative link) or cost-sensitive loss on adjacent bins.
+
+## Robustness spot checks (same validation rows, perturbed inputs)
+
+We re-run the **state** head on controlled variants. **No gold labels** for perturbed text—the point is to show *sensitivity* to known ambiguity patterns (short text, stripped metadata, conflict, typos).
+
+- **Row 15** baseline `focused` — scenarios:
+
+```json
+{
+  "baseline": "focused",
+  "text_ok": "calm",
+  "text_fine": "calm",
+  "text_missing_meta": "overwhelmed",
+  "text_conflict_high_stress_calm_words": "mixed",
+  "text_typo_heavy": "focused"
+}
+```
+- **Row 77** baseline `calm` — scenarios:
+
+```json
+{
+  "baseline": "calm",
+  "text_ok": "neutral",
+  "text_fine": "calm",
+  "text_missing_meta": "overwhelmed",
+  "text_conflict_high_stress_calm_words": "mixed",
+  "text_typo_heavy": "calm"
+}
+```
+- **Row 78** baseline `restless` — scenarios:
+
+```json
+{
+  "baseline": "restless",
+  "text_ok": "calm",
+  "text_fine": "focused",
+  "text_missing_meta": "overwhelmed",
+  "text_conflict_high_stress_calm_words": "mixed",
+  "text_typo_heavy": "restless"
+}
+```
+- **Row 116** baseline `mixed` — scenarios:
+
+```json
+{
+  "baseline": "mixed",
+  "text_ok": "neutral",
+  "text_fine": "neutral",
+  "text_missing_meta": "mixed",
+  "text_conflict_high_stress_calm_words": "mixed",
+  "text_typo_heavy": "neutral"
+}
+```
+- **Row 136** baseline `calm` — scenarios:
+
+```json
+{
+  "baseline": "calm",
+  "text_ok": "calm",
+  "text_fine": "calm",
+  "text_missing_meta": "calm",
+  "text_conflict_high_stress_calm_words": "mixed",
+  "text_typo_heavy": "calm"
+}
+```
+
+Expected behavior: ultra-short inputs (`ok`, `fine`) often collapse to a frequent class; missing metadata shifts the decision boundary; contradictory stress vs calm wording exposes softmax’s single-label limitation.
+
+## Takeaway
+
+Ambiguous human language will always violate single-label classifiers occasionally. CompassMind pairs **calibrated probabilities**, an explicit **uncertainty layer**, and **conservative** recommendations so the product fails toward safety—not toward false certainty.

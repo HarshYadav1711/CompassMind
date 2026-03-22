@@ -1,43 +1,35 @@
-# Edge plan: local, mobile, and offline
+# Edge deployment plan (CompassMind)
 
-## Goals
+## Local / offline
 
-- Run **fully offline** after dependencies and model artifacts are present.  
-- Keep latency predictable on CPU-only hardware (laptops, some tablets).  
-- Avoid sending reflections to third-party APIs.
+- **Runtime:** Python 3.11+ with pinned `requirements.txt`; no network calls in train/infer by default.
+- **Artifacts:** `artifacts/model_bundle.joblib` holds sparse TF-IDF vectorizers, `MetadataEncoder`, two calibrated classifiers, label encoders, uncertainty thresholds. Copy alongside application binaries or load from app-private storage.
 
-## Packaging
+## Model size (order of magnitude)
 
-1. **Python environment**  
-   - Pin dependencies (`requirements.txt` / `pyproject.toml`).  
-   - Ship `artifacts/model_bundle.joblib` next to code or load from app-private storage.
+- Vocabulary-heavy TF-IDF + sparse matrices: typically **tens of MB** on disk for default `max_word_features=12000` / `max_char_features=8000` (exact size depends on vocabulary).
+- Reducing `max_*_features` linearly shrinks both storage and inference cost at the cost of recall on rare n-grams.
 
-2. **Model artifact size**  
-   - TF-IDF + sparse logistic models are modest (tens of MB depending on `max_features`).  
-   - If size matters: reduce `max_word_features` / `max_char_features` in `FeatureConfig` and retrain.
+## Latency (CPU, batch size 1)
 
-## Mobile considerations
+- Dominated by: tokenization + TF-IDF transform + sparse matmul + calibration. On a modern laptop, **single-digit to low tens of ms** per row is a reasonable target before optimization; profile on your SKU.
+- Batch inference amortizes vectorizer overhead; avoid per-request Python cold start in production services.
 
-- **On-device Python** (e.g., embedded interpreter) is possible but heavy; common patterns:  
-  - **Server-on-device** (localhost) via small FastAPI/uvicorn wrapper (optional extra).  
-  - **Native port**: export coefficients sparsely or convert to ONNX / Core ML in a later phase (not implemented here).
+## Tradeoffs
 
-## Latency
+| Choice | Upside | Downside |
+| --- | --- | --- |
+| Text + metadata | Context when fields are clean | Extra variance when metadata is wrong/missing |
+| Text-only | Simpler, fewer failure modes from bad metadata | Loses structured cues (sleep, stress) |
+| Calibrated logistic | Fast, explainable coefs | Ceiling accuracy on ambiguous language |
+| Uncertainty + rules | Safe UX under ambiguity | May under-suggest productivity when uncertain |
 
-- Inference is dominated by TF-IDF transforms + sparse matrix multiply; typical laptop CPUs handle batch sizes of hundreds in seconds.  
-- For interactive UX, batch rows or cap `max_features` after profiling on target hardware.
+## On-device feasibility
 
-## Privacy
-
-- No network calls in the default pipeline.  
-- Journals stay on disk/memory controlled by the host app; rotate logs and avoid writing raw text to shared caches on mobile.
+- **Desktop / edge server:** straightforward: same Python stack or package as a small service.
+- **Mobile native:** TF-IDF + sparse linear algebra can be ported (e.g., export coefficients + vocabulary); Python-on-device is heavier—prefer a thin native runtime or on-device server.
+- **Privacy:** offline inference keeps reflections off third-party APIs; still handle local storage encryption and retention policy in the host app.
 
 ## Monitoring (offline-friendly)
 
-- Log **distribution shifts** on `uncertain_flag` rate, predicted class histograms, and missing-metadata counts.  
-- Periodically retrain when new labeled CSVs arrive.
-
-## Safety
-
-- Rules bias toward **grounding, journaling, light planning, rest** when uncertainty or stress/energy signals demand it.  
-- Never present outputs as medical advice; surface uncertainty in the UI when `uncertain_flag` is true.
+- Track `uncertain_flag` rate, class histograms, missing-metadata rate, and average journal length. Drift in these without drift in labels usually means upstream capture changed (PDF layout, form fields).

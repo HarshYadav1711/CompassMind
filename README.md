@@ -66,6 +66,15 @@ Outputs:
 - `artifacts/ablation_summary.json` — text-only vs text+metadata validation metrics  
 - `predictions.csv` — columns: `id`, `predicted_state`, `predicted_intensity`, `confidence`, `uncertain_flag`, `what_to_do`, `when_to_do`
 
+## Evaluation & analysis
+
+Recomputes stratified holdout metrics, text vs text+metadata ablation, linear-model feature attribution, validation failure cases, and robustness spot checks; writes `artifacts/evaluation_report.json` and refreshes **`ERROR_ANALYSIS.md`** and **`EDGE_PLAN.md`**.
+
+```bash
+set PYTHONPATH=%CD%
+python -m compassmind.evaluation
+```
+
 ## Tests
 
 ```bash

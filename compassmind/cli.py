@@ -13,6 +13,7 @@ from compassmind.features import FeatureConfig
 from compassmind.ingestion import load_test_pdf_features, load_training_features
 from compassmind.pdf_parse import parse_pdf_rows
 from compassmind.predict import predict_dataframe
+from compassmind.evaluation.run import build_report, write_markdown
 from compassmind.train_eval import load_bundle, save_bundle, train_bundle
 
 DEFAULT_TRAIN = (
@@ -62,6 +63,17 @@ def cmd_train(args: argparse.Namespace) -> None:
     print("Saved primary bundle to", args.artifacts)
 
 
+def cmd_evaluate(args: argparse.Namespace) -> None:
+    """Run evaluation package; update ERROR_ANALYSIS.md, EDGE_PLAN.md, evaluation_report.json."""
+    root = Path(__file__).resolve().parents[1]
+    report = build_report(data_path=args.data, random_state=args.seed)
+    out = args.out or (root / "artifacts" / "evaluation_report.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+    write_markdown(report, root / "ERROR_ANALYSIS.md", root / "EDGE_PLAN.md")
+    print("Wrote", out)
+
+
 def cmd_ingest(args: argparse.Namespace) -> None:
     """Load training CSV + test PDF; validate schemas; print summary (no model training)."""
     train = load_training_features(args.data, validate=True, add_missing_flags=args.add_missing_flags)
@@ -105,6 +117,12 @@ def main() -> None:
     t.add_argument("--no-cv", action="store_true", help="Skip stratified K-fold CV reporting (faster).")
     t.add_argument("--cv-folds", type=int, default=5)
     t.set_defaults(func=cmd_train)
+
+    ev = sub.add_parser("evaluate", help="Run evaluation report + refresh ERROR_ANALYSIS.md / EDGE_PLAN.md")
+    ev.add_argument("--data", type=Path, default=DEFAULT_TRAIN)
+    ev.add_argument("--seed", type=int, default=42)
+    ev.add_argument("--out", type=Path, default=None)
+    ev.set_defaults(func=cmd_evaluate)
 
     ing = sub.add_parser("ingest", help="Load and validate CSV + PDF (no training)")
     ing.add_argument("--data", type=Path, default=DEFAULT_TRAIN)
