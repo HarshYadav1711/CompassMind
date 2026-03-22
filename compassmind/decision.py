@@ -16,9 +16,15 @@ Action vocabulary (stable snake_case for CSV)
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
+
+# --- Assignment-compliant timing labels (CSV `when_to_do` only) ---
+VALID_TIMINGS = {"now", "within_15_min", "later_today", "tonight", "tomorrow_morning"}
 
 # --- Actions (assignment-aligned) ---
 BOX_BREATHING = "box_breathing"
@@ -38,6 +44,36 @@ WHEN_MORNING = "tomorrow_morning"
 WHEN_STEADY = "when_steady"
 
 
+def map_timing_label(raw_timing: str, time_of_day: str) -> str:
+    """
+    Map internal timing buckets to assignment-compliant labels.
+
+    Internal rules still use :data:`WHEN_*` constants; this layer is the only
+    export surface for CSV consumers.
+    """
+    raw = (raw_timing or "").strip()
+    tod = (time_of_day or "").strip().lower()
+
+    if raw in VALID_TIMINGS:
+        return raw
+
+    internal_to_canonical = {
+        WHEN_AFTER_BREAK: "within_15_min",
+        WHEN_STEADY: "within_15_min",
+        WHEN_EVENING: "tonight",
+        "later": "later_today",
+        "soon": "within_15_min",
+    }
+    if raw in internal_to_canonical:
+        mapped = internal_to_canonical[raw]
+        logger.info("Mapped timing '%s' → '%s'", raw, mapped)
+        return mapped
+
+    fallback = "tonight" if tod == "night" else "later_today"
+    logger.info("Mapped timing '%s' → '%s'", raw, fallback)
+    return fallback
+
+
 def _get_float(row: dict[str, Any], name: str, default: float = 3.0) -> float:
     v = row.get(name)
     if v is None:
@@ -50,7 +86,7 @@ def _get_float(row: dict[str, Any], name: str, default: float = 3.0) -> float:
         return default
 
 
-def recommend(
+def _recommend_raw(
     predicted_state: str,
     predicted_intensity: int,
     uncertain_flag: int,
@@ -59,10 +95,7 @@ def recommend(
     row: dict[str, Any],
 ) -> tuple[str, str]:
     """
-    Deterministic rules. `uncertain_flag` is 0/1 from the uncertainty layer.
-
-    Conservative path: uncertainty → grounding / breathing / pause / journaling.
-    Productive path: only when confidence is adequate and signals align.
+    Core rule engine: returns (action, raw_timing) using internal WHEN_* labels.
     """
     stress = _get_float(row, "stress_level")
     energy = _get_float(row, "energy_level")
@@ -109,3 +142,36 @@ def recommend(
         return LIGHT_PLANNING, WHEN_NOW
 
     return GROUNDING, WHEN_AFTER_BREAK
+
+
+def recommend(
+    predicted_state: str,
+    predicted_intensity: int,
+    uncertain_flag: int,
+    confidence: float,
+    time_of_day: Optional[str],
+    row: dict[str, Any],
+) -> tuple[str, str]:
+    """
+    Deterministic rules. `uncertain_flag` is 0/1 from the uncertainty layer.
+
+    Conservative path: uncertainty → grounding / breathing / pause / journaling.
+    Productive path: only when confidence is adequate and signals align.
+
+    Returned ``when_to_do`` is always in :data:`VALID_TIMINGS` (see :func:`map_timing_label`).
+    """
+    action, raw_timing = _recommend_raw(
+        predicted_state,
+        predicted_intensity,
+        uncertain_flag,
+        confidence,
+        time_of_day,
+        row,
+    )
+    tod_raw = row.get("time_of_day")
+    if tod_raw is None or (isinstance(tod_raw, float) and np.isnan(tod_raw)):
+        tod_s = ""
+    else:
+        tod_s = str(tod_raw).strip()
+    timing = map_timing_label(raw_timing, tod_s)
+    return action, timing

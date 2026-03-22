@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from compassmind.decision import recommend
+from compassmind.decision import VALID_TIMINGS, recommend
 from compassmind.features import MetadataEncoder, combine_features, transform_text_features
 from compassmind.uncertainty import (
     build_uncertainty_config,
@@ -18,6 +18,18 @@ from compassmind.uncertainty import (
     _count_missing_metadata,
     _journal_weakness,
 )
+
+
+def validate_outputs(df: pd.DataFrame) -> None:
+    """Raise if any ``when_to_do`` value is outside ``VALID_TIMINGS``."""
+    if "when_to_do" not in df.columns:
+        raise KeyError("predictions must include column 'when_to_do'")
+    bad = df.loc[~df["when_to_do"].isin(VALID_TIMINGS), "when_to_do"]
+    if len(bad) > 0:
+        uniq = sorted(bad.unique().tolist(), key=str)
+        raise ValueError(
+            f"Invalid when_to_do value(s) {uniq}; allowed: {sorted(VALID_TIMINGS)}"
+        )
 
 
 def predict_dataframe(df: pd.DataFrame, bundle: dict[str, Any]) -> pd.DataFrame:
@@ -94,4 +106,6 @@ def predict_dataframe(df: pd.DataFrame, bundle: dict[str, Any]) -> pd.DataFrame:
         "what_to_do",
         "when_to_do",
     ]
-    return pd.DataFrame(rows)[cols]
+    out = pd.DataFrame(rows)[cols]
+    validate_outputs(out)
+    return out
