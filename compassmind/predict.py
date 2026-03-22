@@ -20,6 +20,21 @@ from compassmind.uncertainty import (
 )
 
 
+def _clip_intensity_by_confidence(pred_int: int, confidence: float) -> int:
+    """
+    Temper high intensity when blended confidence is modest (same scale as CSV ``confidence``).
+
+    Uses the assignment thresholds: 5→4 below 0.7; 4→3 below 0.6. If the model rarely exceeds
+    those confidence levels, most rows map toward mid-range intensity (expected).
+    """
+    p = int(pred_int)
+    if p == 5 and confidence < 0.7:
+        p = 4
+    if p == 4 and confidence < 0.6:
+        p = 3
+    return p
+
+
 def validate_outputs(df: pd.DataFrame) -> None:
     """Raise if any ``when_to_do`` value is outside ``VALID_TIMINGS``."""
     if "when_to_do" not in df.columns:
@@ -58,6 +73,8 @@ def predict_dataframe(df: pd.DataFrame, bundle: dict[str, Any]) -> pd.DataFrame:
     pred_state = le_s.inverse_transform(np.argmax(ps, axis=1))
     pred_int_raw = le_i.inverse_transform(np.argmax(pi, axis=1))
     pred_int = np.array([int(x) for x in pred_int_raw])
+    for i in range(len(pred_int)):
+        pred_int[i] = _clip_intensity_by_confidence(pred_int[i], float(conf[i]))
 
     rows: list[dict[str, Any]] = []
     for i in range(len(df)):

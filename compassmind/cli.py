@@ -29,6 +29,7 @@ from compassmind.constants import (
     EVALUATION_REPORT_JSON,
     PROJECT_ROOT,
     ensure_artifact_dirs,
+    ensure_outputs_dir,
 )
 from compassmind.evaluation.run import build_report, write_markdown
 from compassmind.features import FeatureConfig
@@ -104,6 +105,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
 
 def cmd_predict(args: argparse.Namespace) -> None:
     set_global_seed(args.seed)
+    ensure_outputs_dir()
     bundle = load_bundle(args.bundle)
     if args.csv:
         df = pd.read_csv(args.csv)
@@ -111,6 +113,7 @@ def cmd_predict(args: argparse.Namespace) -> None:
         pdf_path = args.pdf or DEFAULT_TEST_PDF
         df = parse_pdf_rows(str(pdf_path))
     out = predict_dataframe(df, bundle)
+    args.out.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(args.out, index=False)
     print("Wrote", args.out, "rows:", len(out))
 

@@ -6,6 +6,7 @@ Layout::
     artifacts/
       models/          # trained bundles (*.joblib)
       reports/         # evaluation_report.json, ablation_summary.json
+    outputs/           # prediction CSVs and other run outputs
 """
 
 from __future__ import annotations
@@ -29,10 +30,16 @@ ABLATION_SUMMARY_JSON: Path = REPORTS_DIR / "ablation_summary.json"
 DEFAULT_TRAINING_CSV: Path = PROJECT_ROOT / "Sample_arvyax_reflective_dataset.xlsx - Dataset_120.csv"
 DEFAULT_TEST_PDF: Path = PROJECT_ROOT / "arvyax_test_inputs_120.xlsx - Sheet1.pdf"
 
-DEFAULT_PREDICTIONS_CSV: Path = PROJECT_ROOT / "predictions.csv"
+OUTPUTS_DIR: Path = PROJECT_ROOT / "outputs"
+DEFAULT_PREDICTIONS_CSV: Path = OUTPUTS_DIR / "predictions.csv"
 
 
 def ensure_artifact_dirs() -> None:
     """Create artifact subdirectories if missing."""
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def ensure_outputs_dir() -> None:
+    """Create the outputs directory (predictions CSV default location)."""
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)

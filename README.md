@@ -134,13 +134,15 @@ python -m compassmind train --data "Sample_arvyax_reflective_dataset.xlsx - Data
 
 Faster iteration: `python -m compassmind train --no-cv`
 
-### 3. Predict (default: test PDF → `predictions.csv`)
+### 3. Predict (default: test PDF → `outputs/predictions.csv`)
 
 ```bash
-python -m compassmind predict --out predictions.csv
+python -m compassmind predict
 ```
 
-Or from a CSV: `python -m compassmind predict --csv your_rows.csv --out predictions.csv`
+Writes **`outputs/predictions.csv`** (the `outputs/` folder is created automatically). Override path: `--out path/to/file.csv`.
+
+Or from a CSV: `python -m compassmind predict --csv your_rows.csv`
 
 ### 4. Evaluation report (optional)
 

@@ -6,14 +6,9 @@ Interview-friendly summary
 1. **confidence** — blend of how sure the state model is and how sure the intensity model is
    (weighted max calibrated probability). Higher means “more trust in the top prediction.”
 
-2. **uncertain_flag** (0/1) — set to 1 if *any* of these holds:
-   - **Low confidence** — blended confidence below a threshold (from training bundle or default).
-   - **Close top classes** — top-1 vs top-2 margin on *emotional_state* is small (model is “torn”).
-   - **High entropy** — state distribution is flat-ish (normalized entropy high).
-   - **Weak / short text** — journal too few characters or words to support strong inference.
-   - **Sparse metadata** — many structured fields missing (we can’t anchor context).
-   - **Conflicting signals** — e.g. very high stress with a “calm” face hint, or very low energy
-     paired with a high-arousal state at high intensity (conservative wellness trigger).
+2. **uncertain_flag** (0/1) — set to 1 if **any** of: confidence below 0.40; **or** (top-1 vs top-2
+   gap below 0.05 **and** confidence below 0.55); **or** conflicting signals (safety). Short text or
+   one missing field alone does **not** trigger uncertainty.
 
 This is intentionally rule-based so you can explain trade-offs without a second black box.
 """
@@ -26,10 +21,13 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
-# Defaults if bundle does not override (training may tune conf/entropy only).
-DEFAULT_CONF_THRESH = 0.45
+# Inference: primary confidence floor; gap rule uses margin + secondary confidence.
+DEFAULT_CONF_THRESH = 0.40
+DEFAULT_CONF_SECONDARY_THRESH = 0.55  # used with tight gap only
+DEFAULT_MARGIN_THRESH = 0.05  # top1 - top2 below this => check secondary rule
+
+# Training-time tuning (holdout / metrics only); not used for inference uncertain_flag.
 DEFAULT_ENTROPY_THRESH = 0.88
-DEFAULT_MARGIN_THRESH = 0.12  # top1 - top2 below this => uncertain
 MIN_JOURNAL_CHARS = 40
 MIN_JOURNAL_WORDS = 8
 MAX_MISSING_METADATA = 5  # if >= this many of 9 structured fields missing => uncertain
@@ -150,11 +148,12 @@ def _conflicting_signals(
 
 @dataclass
 class UncertaintyConfig:
-    """Tunable knobs; bundle may override conf/entropy thresholds."""
+    """Inference thresholds for ``compute_uncertain_flag`` (deterministic)."""
 
     conf_thresh: float = DEFAULT_CONF_THRESH
-    entropy_thresh: float = DEFAULT_ENTROPY_THRESH
+    conf_secondary_thresh: float = DEFAULT_CONF_SECONDARY_THRESH
     margin_thresh: float = DEFAULT_MARGIN_THRESH
+    entropy_thresh: float = DEFAULT_ENTROPY_THRESH  # reserved for training metrics only
     min_chars: int = MIN_JOURNAL_CHARS
     min_words: int = MIN_JOURNAL_WORDS
     max_missing_meta: int = MAX_MISSING_METADATA
@@ -171,16 +170,18 @@ def compute_uncertain_flag(
     conflicting: bool,
     cfg: UncertaintyConfig,
 ) -> int:
-    """Return 1 if uncertain, else 0 (transparent OR-of-rules)."""
+    """
+    Return 1 if uncertain, else 0.
+
+    ``journal_weak`` and ``missing_meta`` are accepted for API compatibility but do **not**
+    alone trigger uncertainty. ``norm_entropy_state`` is unused for the flag (entropy alone
+    does not mark uncertain).
+    """
+    _ = max_state_prob, norm_entropy_state, journal_weak, missing_meta
+    gap = margin_state
     if confidence < cfg.conf_thresh:
         return 1
-    if norm_entropy_state > cfg.entropy_thresh:
-        return 1
-    if margin_state < cfg.margin_thresh:
-        return 1
-    if journal_weak:
-        return 1
-    if missing_meta >= cfg.max_missing_meta:
+    if gap < cfg.margin_thresh and confidence < cfg.conf_secondary_thresh:
         return 1
     if conflicting:
         return 1
@@ -188,15 +189,9 @@ def compute_uncertain_flag(
 
 
 def build_uncertainty_config(bundle: dict[str, Any]) -> UncertaintyConfig:
-    """Merge training-tuned thresholds with default margin/text/metadata rules."""
-    return UncertaintyConfig(
-        conf_thresh=float(bundle.get("conf_thresh", DEFAULT_CONF_THRESH)),
-        entropy_thresh=float(bundle.get("ent_thresh", DEFAULT_ENTROPY_THRESH)),
-        margin_thresh=DEFAULT_MARGIN_THRESH,
-        min_chars=MIN_JOURNAL_CHARS,
-        min_words=MIN_JOURNAL_WORDS,
-        max_missing_meta=MAX_MISSING_METADATA,
-    )
+    """Inference uses fixed diversity-friendly thresholds (ignore legacy bundle tuning)."""
+    _ = bundle
+    return UncertaintyConfig()
 
 
 def combined_scores(

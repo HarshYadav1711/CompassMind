@@ -4,11 +4,9 @@ Rule-based recommendation engine: what_to_do × when_to_do.
 Design principles (product + interview)
 ---------------------------------------
 - **Inputs**: predicted emotional state, predicted intensity, stress, energy, time of day,
-  and the **uncertainty layer** (not just accuracy — we downshift toward wellness-safe actions).
-- **Defaults**: if `uncertain_flag == 1` or confidence is low, prefer *grounding*, *breathing*,
-  *pause*, *journaling*, *rest* — not aggressive productivity.
-- **Conflict policy**: when stress/energy disagree with a “push hard” interpretation, choose
-  conservative regulation skills first.
+  and the **uncertainty layer** (downshift toward wellness-safe actions when rules say so).
+- **Priority**: concrete signal-based branches (stress, energy, state) run **before** the
+  uncertainty fallback so medium-confidence rows still get diverse, appropriate actions.
 
 Action vocabulary (stable snake_case for CSV)
 ----------------------------------------------
@@ -36,7 +34,7 @@ LIGHT_PLANNING = "light_planning"
 MOVEMENT = "movement"
 PAUSE = "pause"
 
-# --- Timing (transparent buckets) ---
+# --- Timing (internal buckets; exported via map_timing_label) ---
 WHEN_NOW = "now"
 WHEN_AFTER_BREAK = "after_break"
 WHEN_EVENING = "this_evening"
@@ -86,6 +84,19 @@ def _get_float(row: dict[str, Any], name: str, default: float = 3.0) -> float:
         return default
 
 
+def _optional_float(row: dict[str, Any], name: str) -> Optional[float]:
+    """None if missing/NaN — avoids treating imputed defaults as real survey values."""
+    v = row.get(name)
+    if v is None:
+        return None
+    if isinstance(v, float) and np.isnan(v):
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _recommend_raw(
     predicted_state: str,
     predicted_intensity: int,
@@ -95,52 +106,79 @@ def _recommend_raw(
     row: dict[str, Any],
 ) -> tuple[str, str]:
     """
-    Core rule engine: returns (action, raw_timing) using internal WHEN_* labels.
+    Core rule engine: returns (action, raw_timing).
+
+    Order: (1) high stress (2) low energy (3) high energy + calm/focused
+    (4) restless / overwhelmed (5) mixed / reflective (6) moderate stress
+    (7) remaining state paths (8) uncertainty fallback (9) default.
     """
+    _ = confidence  # reserved for future gating; uncertainty uses uncertain_flag
     stress = _get_float(row, "stress_level")
     energy = _get_float(row, "energy_level")
+    stress_known = _optional_float(row, "stress_level")
     tod = (time_of_day or "").strip().lower()
-
-    hi_stress = stress >= 4.0
-    low_energy = energy <= 2.0
-    hi_intensity = predicted_intensity >= 4
-    low_conf = confidence < 0.42
+    evening_night = tod in ("evening", "night")
     uncertain = uncertain_flag == 1
 
-    # --- Safe defaults: uncertainty, low confidence, or conflicting high load ---
-    if uncertain or low_conf:
-        if hi_stress or hi_intensity:
-            return BOX_BREATHING, WHEN_AFTER_BREAK
+    # --- 1. High stress (>= 4) ---
+    if stress >= 4.0:
+        if energy <= 2.0:
+            return REST, WHEN_EVENING if evening_night else WHEN_AFTER_BREAK
+        if predicted_state == "overwhelmed":
+            return LIGHT_PLANNING, WHEN_NOW
         return GROUNDING, WHEN_NOW
 
-    # --- Primary mapping (wellness-biased) ---
-    if predicted_state == "overwhelmed" or (hi_stress and hi_intensity):
-        if low_energy:
-            return REST, WHEN_EVENING if tod in ("evening", "night") else WHEN_AFTER_BREAK
-        return LIGHT_PLANNING, WHEN_NOW
+    # --- 2. Low energy (<= 2) ---
+    if energy <= 2.0:
+        if evening_night:
+            return REST, WHEN_EVENING
+        return PAUSE, WHEN_AFTER_BREAK
 
+    # --- 3. High energy (>= 4) + calm / focused ---
+    if energy >= 4.0 and predicted_state in ("calm", "focused"):
+        return DEEP_WORK, WHEN_NOW
+
+    # --- 4. Restless / anxious (overwhelmed below high-stress branch) ---
     if predicted_state == "restless":
         return MOVEMENT, WHEN_NOW if tod != "night" else WHEN_AFTER_BREAK
+    if predicted_state == "overwhelmed":
+        if energy <= 2.0:
+            return REST, WHEN_EVENING if evening_night else WHEN_AFTER_BREAK
+        return LIGHT_PLANNING, WHEN_NOW
 
-    if predicted_state == "mixed":
-        return JOURNALING, WHEN_NOW
+    # --- 5. Reflective / mixed ---
+    if predicted_state in ("mixed", "reflective"):
+        return JOURNALING, "within_15_min"
 
+    # --- 6. Moderate stress (2–3), explicit field only ---
+    if stress_known is not None and 2.0 <= stress_known <= 3.0:
+        return GROUNDING, "within_15_min"
+
+    # --- 7. Remaining states (neutral, calm, focused, neutral) ---
     if predicted_state == "neutral":
-        return LIGHT_PLANNING, WHEN_STEADY if low_energy else WHEN_NOW
+        return LIGHT_PLANNING, WHEN_STEADY if energy <= 2.0 else WHEN_NOW
 
     if predicted_state == "calm":
-        if predicted_intensity <= 2 and not hi_stress:
+        if predicted_intensity <= 2 and stress < 4.0:
             return BOX_BREATHING, WHEN_MORNING if tod in ("night", "early_morning") else WHEN_NOW
         return GROUNDING, WHEN_NOW
 
     if predicted_state == "focused":
-        # Deep work only with sufficient energy and not at night by default
-        if energy >= 3 and not hi_stress and tod not in ("night",) and predicted_intensity >= 3:
+        if energy >= 3 and stress < 4.0 and tod not in ("night",) and predicted_intensity >= 3:
             return DEEP_WORK, WHEN_NOW
-        if low_energy or hi_stress:
+        if energy <= 2.0 or stress >= 4.0:
             return PAUSE, WHEN_AFTER_BREAK
         return LIGHT_PLANNING, WHEN_NOW
 
+    # --- 8. Uncertainty fallback only after signal-based rules ---
+    if uncertain:
+        if stress >= 3.0:
+            return GROUNDING, "within_15_min"
+        if energy <= 2.0:
+            return REST, "later_today"
+        return LIGHT_PLANNING, "later_today"
+
+    # --- 9. Default ---
     return GROUNDING, WHEN_AFTER_BREAK
 
 
@@ -153,12 +191,7 @@ def recommend(
     row: dict[str, Any],
 ) -> tuple[str, str]:
     """
-    Deterministic rules. `uncertain_flag` is 0/1 from the uncertainty layer.
-
-    Conservative path: uncertainty → grounding / breathing / pause / journaling.
-    Productive path: only when confidence is adequate and signals align.
-
-    Returned ``when_to_do`` is always in :data:`VALID_TIMINGS` (see :func:`map_timing_label`).
+    Deterministic rules. Returned ``when_to_do`` is always in :data:`VALID_TIMINGS`.
     """
     action, raw_timing = _recommend_raw(
         predicted_state,
