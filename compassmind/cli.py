@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 from compassmind.features import FeatureConfig
+from compassmind.ingestion import load_test_pdf_features, load_training_features
 from compassmind.pdf_parse import parse_pdf_rows
 from compassmind.predict import predict_dataframe
 from compassmind.train_eval import load_bundle, save_bundle, train_bundle
@@ -21,7 +22,7 @@ ARTIFACTS = Path(__file__).resolve().parents[1] / "artifacts" / "model_bundle.jo
 
 
 def cmd_train(args: argparse.Namespace) -> None:
-    df = pd.read_csv(args.data)
+    df = load_training_features(args.data, validate=True, add_missing_flags=False)
     cfg = FeatureConfig()
     results = {}
     for use_meta in (True, False):
@@ -38,6 +39,15 @@ def cmd_train(args: argparse.Namespace) -> None:
     ship = train_bundle(df, cfg, use_metadata=True, random_state=args.seed)
     save_bundle(ship, args.artifacts)
     print("Saved primary bundle to", args.artifacts)
+
+
+def cmd_ingest(args: argparse.Namespace) -> None:
+    """Load training CSV + test PDF; validate schemas; print summary (no model training)."""
+    train = load_training_features(args.data, validate=True, add_missing_flags=args.add_missing_flags)
+    test = load_test_pdf_features(args.pdf, validate=True, add_missing_flags=args.add_missing_flags)
+    print("training", train.shape, "test", test.shape)
+    print("training columns:", list(train.columns))
+    print("test columns:", list(test.columns))
 
 
 def cmd_predict(args: argparse.Namespace) -> None:
@@ -61,6 +71,12 @@ def main() -> None:
     t.add_argument("--artifacts", type=Path, default=ARTIFACTS)
     t.add_argument("--seed", type=int, default=42)
     t.set_defaults(func=cmd_train)
+
+    ing = sub.add_parser("ingest", help="Load and validate CSV + PDF (no training)")
+    ing.add_argument("--data", type=Path, default=DEFAULT_TRAIN)
+    ing.add_argument("--pdf", type=Path, default=DEFAULT_PDF)
+    ing.add_argument("--add-missing-flags", action="store_true")
+    ing.set_defaults(func=cmd_ingest)
 
     pr = sub.add_parser("predict", help="Run inference to predictions.csv")
     pr.add_argument("--bundle", type=Path, default=ARTIFACTS)
