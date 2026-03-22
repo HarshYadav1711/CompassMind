@@ -1,108 +1,205 @@
 # CompassMind
 
-Production-style **local** pipeline for the Arvyax reflective emotion task: multiclass `emotional_state`, discrete `intensity` (1–5), calibrated uncertainty, and a **rule-based** `what_to_do` / `when_to_do` layer that defaults to safe actions when confidence is low.
+## Overview
 
-## Stack
+CompassMind is a local machine learning system designed to move beyond prediction and toward meaningful user guidance.
 
-- Python 3.11+, pandas, NumPy, scikit-learn, joblib, pydantic, pytest  
-- PDF test inputs: `pdfplumber` (with `pypdf` available for alternate parsing)  
-- **No** cloud APIs, paid keys, or hosted LLMs
+The system takes short, noisy user reflections along with contextual signals (sleep, stress, energy, time of day) and produces:
 
-## Data
+* Emotional understanding (state + intensity)
+* Actionable recommendation (what to do)
+* Timing decision (when to do it)
+* Uncertainty-aware outputs
 
-- Train: `Sample_arvyax_reflective_dataset.xlsx - Dataset_120.csv`  
-- Test PDF: `arvyax_test_inputs_120.xlsx - Sheet1.pdf`
+Unlike standard ML pipelines, this system is designed with a **product mindset**, focusing on safety, interpretability, and real-world usability.
 
-## Data ingestion (no training)
+---
 
-The `compassmind.ingestion` package loads the CSV and PDF, applies **deterministic preprocessing** (lowercase journal text, trim, Unicode NFKC, standardized missing values, optional `{col}_is_missing` flags), and validates each row with **strict Pydantic schemas** (`FeatureRowStrict`, `TrainingRowStrict`).
+## Key Design Philosophy
 
-```bash
-set PYTHONPATH=%CD%
-python -m compassmind ingest
-```
+This project follows a simple principle:
 
-Programmatic use:
+> AI should not only understand human states — it should guide users toward better ones.
 
-```python
-from compassmind.ingestion import load_training_features, load_test_pdf_features
+The system is intentionally designed to:
 
-train_df = load_training_features()
-test_df = load_test_pdf_features()
-```
+* handle noisy and imperfect inputs
+* avoid overconfident predictions
+* provide safe, low-risk recommendations under uncertainty
 
-## Baseline training (features + calibrated models)
+---
 
-- **Text**: word TF-IDF (n-grams via `word_ngram_range`) + character WB TF-IDF (`char_ngram_range`).
-- **Metadata**: numeric median impute + `StandardScaler`; 9 explicit `{col}_is_missing` flags; categorical one-hot with `__MISSING__`.
-- **Targets**: `emotional_state` (multiclass) and `intensity` (1–5 as 5-way classification).
-- **Models**: sigmoid-calibrated `LogisticRegression` (default). Optional `--try-xgb` benchmarks **CPU** `XGBClassifier` and switches only if validation macro-F1 improves meaningfully.
-- **Ablation**: `train` fits **text-only** vs **text+metadata** and writes `ablation_summary.json`.
-- **Validation**: stratified holdout + optional stratified K-fold metrics (`--no-cv` to skip CV for speed).
+## Approach
 
-```bash
-set PYTHONPATH=%CD%
-python -m compassmind train --data "Sample_arvyax_reflective_dataset.xlsx - Dataset_120.csv"
-python -m compassmind train --try-xgb --no-cv
-```
+### 1. Feature Engineering
 
-Artifacts (created under `artifacts/`):
+Two sources of information are used:
 
-- `artifacts/models/model_bundle.joblib` — vectorizers, `MetadataEncoder`, calibrated `clf_state` / `clf_intensity`, label encoders, uncertainty thresholds  
-- `artifacts/models/model_bundle.metrics.json` — validation metrics next to the bundle  
-- `artifacts/reports/ablation_summary.json` — text-only vs text+metadata ablation
+#### Text Features
 
-## Quickstart
+* TF-IDF (word n-grams)
+* TF-IDF (character n-grams)
+
+Character n-grams help handle typos and messy inputs.
+
+#### Metadata Features
+
+* sleep_hours, stress_level, energy_level
+* ambience_type, time_of_day
+* previous_day_mood, face_emotion_hint
+* reflection_quality
+
+---
+
+### 2. Models
+
+#### Emotional State
+
+* Multiclass classification using Logistic Regression / XGBoost
+
+#### Intensity
+
+* Treated as classification (1–5)
+* Chosen over regression for stability and discrete outputs
+
+---
+
+### 3. Decision Engine (Core)
+
+A rule-based layer converts predictions into actions.
+
+This layer uses:
+
+* predicted state
+* intensity
+* stress, energy
+* time of day
+* uncertainty
+
+The system prioritizes:
+
+* calming interventions under stress
+* productivity when energy is high
+* rest when energy is low
+* safe actions when uncertain
+
+---
+
+### 4. Uncertainty Modeling
+
+Confidence is derived from prediction probabilities.
+
+Uncertainty increases when:
+
+* prediction confidence is low
+* top class probabilities are close
+* text is very short
+* metadata is missing or conflicting
+
+When uncertain, the system defaults to safe recommendations like grounding or light planning.
+
+---
+
+### 5. Ablation Study
+
+| Model           | Observation                                 |
+| --------------- | ------------------------------------------- |
+| Text-only       | Works for expressive inputs                 |
+| Text + Metadata | Strong improvement in short/ambiguous cases |
+
+Metadata plays a critical role when text is weak.
+
+---
+
+## How to Run
+
+**Prerequisites:** Python 3.11+, and the training CSV + test PDF in the project root (filenames as shipped with the assignment).
+
+### 1. Environment
 
 ```bash
 cd CompassMind
 python -m venv .venv
-.venv\Scripts\activate   # Windows
+.venv\Scripts\activate
 pip install -r requirements.txt
-set PYTHONPATH=%CD%
+```
+
+Optional: `pip install -e .` so the `compassmind` command is on your `PATH`.
+
+### 2. Train (writes `artifacts/models/model_bundle.joblib`)
+
+```bash
 python -m compassmind train --data "Sample_arvyax_reflective_dataset.xlsx - Dataset_120.csv"
+```
+
+Faster iteration: `python -m compassmind train --no-cv`
+
+### 3. Predict (default: test PDF → `predictions.csv`)
+
+```bash
 python -m compassmind predict --out predictions.csv
 ```
 
-Outputs:
+Or from a CSV: `python -m compassmind predict --csv your_rows.csv --out predictions.csv`
 
-- `artifacts/models/model_bundle.joblib` — fitted vectorizers, metadata encoder, calibrated models, thresholds  
-- `artifacts/reports/ablation_summary.json` — text-only vs text+metadata validation metrics  
-- `predictions.csv` — columns: `id`, `predicted_state`, `predicted_intensity`, `confidence`, `uncertain_flag`, `what_to_do`, `when_to_do`
-
-## Evaluation & analysis
-
-Recomputes stratified holdout metrics, text vs text+metadata ablation, linear-model feature attribution, validation failure cases, and robustness spot checks; writes `artifacts/reports/evaluation_report.json` and refreshes **`ERROR_ANALYSIS.md`** and **`EDGE_PLAN.md`**.
+### 4. Evaluation report (optional)
 
 ```bash
-set PYTHONPATH=%CD%
-python -m compassmind.evaluation
+python -m compassmind evaluate
 ```
 
-## Optional local API
+Writes `artifacts/reports/evaluation_report.json` and refreshes `ERROR_ANALYSIS.md` / `EDGE_PLAN.md`.
 
-After `pip install -e ".[demo]"` (or `pip install fastapi uvicorn`):
+### 5. Ingestion check only (no training)
 
 ```bash
-set PYTHONPATH=%CD%
-uvicorn compassmind.demo_api:app --port 8765
+python -m compassmind ingest
 ```
 
-Loads `artifacts/models/model_bundle.joblib` (train first). `GET /health`, `POST /predict_json` with a `ReflectionInput` body.
-
-## Tests
+### 6. Tests
 
 ```bash
-set PYTHONPATH=%CD%
 pytest -q
 ```
 
-## Design notes
+### Optional API demo
 
-- **Text**: ingestion lowercases journal text and trims whitespace (typos/digits preserved); modeling uses word + char TF-IDF on that preprocessed field.  
-- **Metadata**: numeric imputation + scaling + missing flags; categorical one-hot with `__MISSING__`.  
-- **Uncertainty** (`compassmind/uncertainty.py`): **confidence** = weighted blend of max calibrated probabilities (state + intensity). **`uncertain_flag`** ∈ {0,1} is rule-based OR of: low confidence, high entropy, small top-1 vs top-2 margin, short/weak journal text, sparse metadata, or a few conservative “signal conflict” checks. Training still stores tuned `conf_thresh` / `ent_thresh` in the bundle for the probability/entropy slice.  
-- **Recommendations** (`compassmind/decision.py`): transparent mapping from `predicted_state`, `predicted_intensity`, stress, energy, time of day, and uncertainty to **`what_to_do`** / **`when_to_do`** using a fixed vocabulary (`box_breathing`, `journaling`, `grounding`, `deep_work`, `rest`, `light_planning`, `movement`, `pause`, …). Under uncertainty, defaults favor **breathing / grounding / pause** over aggressive productivity.  
-- **Offline**: see `EDGE_PLAN.md`.
+After `pip install -e ".[demo]"`, train first, then: `uvicorn compassmind.demo_api:app --port 8765`
 
-See `ERROR_ANALYSIS.md` for failure modes and ablation discussion.
+---
+
+## Output Format
+
+```
+id,
+predicted_state,
+predicted_intensity,
+confidence,
+uncertain_flag,
+what_to_do,
+when_to_do
+```
+
+---
+
+## Limitations
+
+* Ambiguous short text remains challenging
+* Some labels appear noisy or subjective
+* Context signals are sometimes incomplete
+
+---
+
+## Future Improvements
+
+* lightweight transformer (on-device)
+* better ordinal modeling for intensity
+* adaptive decision learning instead of fixed rules
+
+---
+
+## Final Note
+
+The system prioritizes **safe and supportive interventions under uncertainty**, aligning with real-world mental wellness systems.
+
+---

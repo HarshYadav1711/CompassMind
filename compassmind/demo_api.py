@@ -10,6 +10,8 @@ POST /predict_json with a JSON body matching `ReflectionInput` fields (see `comp
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 from pydantic import BaseModel
 
@@ -25,6 +27,17 @@ from compassmind.train_eval import load_bundle
 
 _bundle = load_bundle(DEFAULT_MODEL_BUNDLE)
 app = FastAPI(title="CompassMind local demo", version="0.1.0")
+
+
+@app.get("/")
+def root() -> dict[str, Any]:
+    """Landing page: `/` has no UI; use `/docs` for Swagger or POST `/predict_json`."""
+    return {
+        "service": "CompassMind local demo",
+        "docs": "/docs",
+        "health": "/health",
+        "predict": "POST /predict_json (body: ReflectionInput JSON)",
+    }
 
 
 class PredictResponse(BaseModel):
