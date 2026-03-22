@@ -1,7 +1,7 @@
 """
 Evaluation and analysis: holdout metrics, ablation, feature attribution, robustness, reporting.
 
-Run: ``python -m compassmind.evaluation`` (writes ``artifacts/evaluation_report.json`` and refreshes docs).
+Run: ``python -m compassmind.evaluation`` (writes ``artifacts/reports/evaluation_report.json`` and refreshes docs).
 """
 
 from compassmind.evaluation.holdout import HoldoutResult, evaluate_holdout

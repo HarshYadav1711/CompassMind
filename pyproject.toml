@@ -19,6 +19,9 @@ dependencies = [
 dev = ["pytest>=8,<9"]
 demo = ["fastapi>=0.110,<1", "uvicorn>=0.27,<1"]
 
+[project.scripts]
+compassmind = "compassmind.cli:main"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

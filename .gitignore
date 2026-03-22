@@ -5,6 +5,6 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
-artifacts/*.joblib
-artifacts/*.json
+artifacts/
+predictions.csv
 *.pyc

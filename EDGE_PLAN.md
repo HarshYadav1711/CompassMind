@@ -3,7 +3,7 @@
 ## Local / offline
 
 - **Runtime:** Python 3.11+ with pinned `requirements.txt`; no network calls in train/infer by default.
-- **Artifacts:** `artifacts/model_bundle.joblib` holds sparse TF-IDF vectorizers, `MetadataEncoder`, two calibrated classifiers, label encoders, uncertainty thresholds. Copy alongside application binaries or load from app-private storage.
+- **Artifacts:** `artifacts/models/model_bundle.joblib` holds sparse TF-IDF vectorizers, `MetadataEncoder`, two calibrated classifiers, label encoders, uncertainty thresholds. Copy alongside application binaries or load from app-private storage.
 
 ## Model size (order of magnitude)
 

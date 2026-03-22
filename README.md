@@ -19,7 +19,7 @@ The `compassmind.ingestion` package loads the CSV and PDF, applies **determinist
 
 ```bash
 set PYTHONPATH=%CD%
-python -m compassmind.cli ingest
+python -m compassmind ingest
 ```
 
 Programmatic use:
@@ -42,11 +42,15 @@ test_df = load_test_pdf_features()
 
 ```bash
 set PYTHONPATH=%CD%
-python -m compassmind.cli train --data "Sample_arvyax_reflective_dataset.xlsx - Dataset_120.csv"
-python -m compassmind.cli train --try-xgb --no-cv
+python -m compassmind train --data "Sample_arvyax_reflective_dataset.xlsx - Dataset_120.csv"
+python -m compassmind train --try-xgb --no-cv
 ```
 
-Artifacts: `artifacts/model_bundle.joblib` (vectorizers, `MetadataEncoder`, calibrated `clf_state` / `clf_intensity`, label encoders, uncertainty thresholds) plus `*.metrics.json`.
+Artifacts (created under `artifacts/`):
+
+- `artifacts/models/model_bundle.joblib` — vectorizers, `MetadataEncoder`, calibrated `clf_state` / `clf_intensity`, label encoders, uncertainty thresholds  
+- `artifacts/models/model_bundle.metrics.json` — validation metrics next to the bundle  
+- `artifacts/reports/ablation_summary.json` — text-only vs text+metadata ablation
 
 ## Quickstart
 
@@ -56,24 +60,35 @@ python -m venv .venv
 .venv\Scripts\activate   # Windows
 pip install -r requirements.txt
 set PYTHONPATH=%CD%
-python -m compassmind.cli train --data "Sample_arvyax_reflective_dataset.xlsx - Dataset_120.csv"
-python -m compassmind.cli predict --out predictions.csv
+python -m compassmind train --data "Sample_arvyax_reflective_dataset.xlsx - Dataset_120.csv"
+python -m compassmind predict --out predictions.csv
 ```
 
 Outputs:
 
-- `artifacts/model_bundle.joblib` — fitted vectorizers, metadata encoder, calibrated models, thresholds  
-- `artifacts/ablation_summary.json` — text-only vs text+metadata validation metrics  
+- `artifacts/models/model_bundle.joblib` — fitted vectorizers, metadata encoder, calibrated models, thresholds  
+- `artifacts/reports/ablation_summary.json` — text-only vs text+metadata validation metrics  
 - `predictions.csv` — columns: `id`, `predicted_state`, `predicted_intensity`, `confidence`, `uncertain_flag`, `what_to_do`, `when_to_do`
 
 ## Evaluation & analysis
 
-Recomputes stratified holdout metrics, text vs text+metadata ablation, linear-model feature attribution, validation failure cases, and robustness spot checks; writes `artifacts/evaluation_report.json` and refreshes **`ERROR_ANALYSIS.md`** and **`EDGE_PLAN.md`**.
+Recomputes stratified holdout metrics, text vs text+metadata ablation, linear-model feature attribution, validation failure cases, and robustness spot checks; writes `artifacts/reports/evaluation_report.json` and refreshes **`ERROR_ANALYSIS.md`** and **`EDGE_PLAN.md`**.
 
 ```bash
 set PYTHONPATH=%CD%
 python -m compassmind.evaluation
 ```
+
+## Optional local API
+
+After `pip install -e ".[demo]"` (or `pip install fastapi uvicorn`):
+
+```bash
+set PYTHONPATH=%CD%
+uvicorn compassmind.demo_api:app --port 8765
+```
+
+Loads `artifacts/models/model_bundle.joblib` (train first). `GET /health`, `POST /predict_json` with a `ReflectionInput` body.
 
 ## Tests
 

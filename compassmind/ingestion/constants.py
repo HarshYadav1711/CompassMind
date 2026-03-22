@@ -1,13 +1,12 @@
-"""Shared column names and default artifact paths."""
+"""Shared column names; dataset paths align with ``compassmind.constants``."""
 
 from __future__ import annotations
 
-from pathlib import Path
-
-PACKAGE_ROOT = Path(__file__).resolve().parents[2]
-
-DEFAULT_TRAINING_CSV = PACKAGE_ROOT / "Sample_arvyax_reflective_dataset.xlsx - Dataset_120.csv"
-DEFAULT_TEST_PDF = PACKAGE_ROOT / "arvyax_test_inputs_120.xlsx - Sheet1.pdf"
+from compassmind.constants import (
+    DEFAULT_TEST_PDF,
+    DEFAULT_TRAINING_CSV,
+    PROJECT_ROOT as PACKAGE_ROOT,
+)
 
 # Input features shared by training (minus labels) and test.
 FEATURE_COLUMN_ORDER: tuple[str, ...] = (

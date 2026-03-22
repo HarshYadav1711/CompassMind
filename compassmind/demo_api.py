@@ -10,8 +10,6 @@ POST /predict_json with a JSON body matching `ReflectionInput` fields (see `comp
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 from pydantic import BaseModel
 
@@ -20,14 +18,12 @@ try:
 except ImportError as e:  # pragma: no cover
     raise ImportError("Install optional deps: pip install fastapi uvicorn") from e
 
+from compassmind.constants import DEFAULT_MODEL_BUNDLE
 from compassmind.predict import predict_dataframe
 from compassmind.schemas import ReflectionInput
 from compassmind.train_eval import load_bundle
 
-ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BUNDLE = ROOT / "artifacts" / "model_bundle.joblib"
-
-_bundle = load_bundle(DEFAULT_BUNDLE)
+_bundle = load_bundle(DEFAULT_MODEL_BUNDLE)
 app = FastAPI(title="CompassMind local demo", version="0.1.0")
 
 

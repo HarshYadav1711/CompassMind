@@ -17,12 +17,17 @@ from compassmind.evaluation.errors import extract_failure_cases
 from compassmind.evaluation.holdout import evaluate_holdout
 from compassmind.evaluation.metrics import classification_metrics, classification_report_dict
 from compassmind.evaluation.robustness import robustness_battery
+from compassmind.constants import (
+    DEFAULT_TRAINING_CSV,
+    EVALUATION_REPORT_JSON,
+    PROJECT_ROOT,
+    ensure_artifact_dirs,
+)
 from compassmind.features import FeatureConfig
 from compassmind.ingestion import load_training_features
+from compassmind.seed import set_global_seed
 
-ROOT = Path(__file__).resolve().parents[2]
-ARTIFACTS = ROOT / "artifacts"
-DEFAULT_REPORT = ARTIFACTS / "evaluation_report.json"
+DEFAULT_REPORT = EVALUATION_REPORT_JSON
 
 
 def _fmt_float(x: Any, nd: int = 4) -> str:
@@ -38,7 +43,9 @@ def build_report(
     data_path: Path | None = None,
     random_state: int = 42,
 ) -> dict[str, Any]:
-    path = data_path or (ROOT / "Sample_arvyax_reflective_dataset.xlsx - Dataset_120.csv")
+    set_global_seed(random_state)
+    ensure_artifact_dirs()
+    path = data_path or DEFAULT_TRAINING_CSV
     df = load_training_features(path, validate=True, add_missing_flags=True)
     cfg = FeatureConfig(random_state=random_state)
 
@@ -283,7 +290,7 @@ def write_markdown(report: dict[str, Any], path_error: Path, path_edge: Path) ->
         "## Local / offline",
         "",
         "- **Runtime:** Python 3.11+ with pinned `requirements.txt`; no network calls in train/infer by default.",
-        "- **Artifacts:** `artifacts/model_bundle.joblib` holds sparse TF-IDF vectorizers, `MetadataEncoder`, two calibrated classifiers, label encoders, uncertainty thresholds. Copy alongside application binaries or load from app-private storage.",
+        "- **Artifacts:** `artifacts/models/model_bundle.joblib` holds sparse TF-IDF vectorizers, `MetadataEncoder`, two calibrated classifiers, label encoders, uncertainty thresholds. Copy alongside application binaries or load from app-private storage.",
         "",
         "## Model size (order of magnitude)",
         "",
@@ -319,10 +326,10 @@ def write_markdown(report: dict[str, Any], path_error: Path, path_edge: Path) ->
 
 
 def main() -> None:
-    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    ensure_artifact_dirs()
     report = build_report()
     DEFAULT_REPORT.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
-    write_markdown(report, ROOT / "ERROR_ANALYSIS.md", ROOT / "EDGE_PLAN.md")
+    write_markdown(report, PROJECT_ROOT / "ERROR_ANALYSIS.md", PROJECT_ROOT / "EDGE_PLAN.md")
     print("Wrote", DEFAULT_REPORT)
     print("Updated ERROR_ANALYSIS.md and EDGE_PLAN.md")
 

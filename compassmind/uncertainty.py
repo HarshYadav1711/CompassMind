@@ -120,8 +120,14 @@ def _conflicting_signals(
 
     stress = _f("stress_level")
     energy = _f("energy_level")
-    face = (row.get("face_emotion_hint") or "").strip().lower()
-    prev_mood = (row.get("previous_day_mood") or "").strip().lower()
+
+    def _norm_str(val: Any) -> str:
+        if val is None or (isinstance(val, float) and np.isnan(val)):
+            return ""
+        return str(val).strip().lower()
+
+    face = _norm_str(row.get("face_emotion_hint"))
+    prev_mood = _norm_str(row.get("previous_day_mood"))
 
     # High stress but face hint says calm — often noisy OCR/metadata.
     if stress is not None and stress >= 4.5 and face == "calm_face":

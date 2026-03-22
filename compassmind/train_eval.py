@@ -24,6 +24,7 @@ from compassmind.features import (
     fit_transform_text_features,
     transform_text_features,
 )
+from compassmind.seed import set_global_seed
 from compassmind.uncertainty import combined_scores, uncertain_mask
 
 Backend = Literal["logistic", "xgboost"]
@@ -270,6 +271,7 @@ def train_bundle(
     Fit calibrated classifiers, tune uncertainty thresholds on a stratified holdout,
     refit on full data, return artifact bundle + metrics.
     """
+    set_global_seed(random_state)
     y_s, y_i, le_s, le_i = prepare_labels(df)
 
     X_train, X_val, ys_tr, ys_va, yi_tr, yi_va = train_test_split(

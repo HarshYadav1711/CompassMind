@@ -4,6 +4,7 @@ import numpy as np
 
 from compassmind.uncertainty import (
     UncertaintyConfig,
+    _conflicting_signals,
     compute_uncertain_flag,
     top_two_margin,
 )
@@ -12,6 +13,16 @@ from compassmind.uncertainty import (
 def test_close_top_classes_low_margin_flags_uncertain():
     p = np.array([[0.34, 0.33, 0.33, 0.0, 0.0, 0.0]])
     assert float(top_two_margin(p)[0]) < 0.12
+
+
+def test_conflicting_signals_handles_nan_float_metadata():
+    row = {
+        "stress_level": 2.0,
+        "energy_level": 3.0,
+        "face_emotion_hint": float("nan"),
+        "previous_day_mood": float("nan"),
+    }
+    assert _conflicting_signals(row, "calm", 2) is False
 
 
 def test_compute_uncertain_flag_or_logic():
